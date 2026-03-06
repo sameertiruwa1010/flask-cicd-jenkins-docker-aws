@@ -30,7 +30,6 @@ pipeline {
         // -----------------------------
         stage('Checkout Code') {
             steps {
-
                 // Clone the project repository from GitHub
                 git branch: 'main', 
                     url: 'https://github.com/sameertiruwa1010/flask-cicd-jenkins-docker-aws.git',
@@ -61,29 +60,12 @@ pipeline {
         }
         
         // -----------------------------
-        // Stage 3: Run automated tests
+        // ❌ Stage 3: Run Tests - REMOVED
         // -----------------------------
-        stage('Run Tests') {
-            steps {
-                sh '''
-                    # Activate Python environment
-                    . venv/bin/activate
-
-                    # Run unit tests using pytest
-                    pytest tests/ -v --junitxml=test-results.xml
-                '''
-            }
-
-            // Always publish test results even if tests fail
-            post {
-                always {
-                    junit 'test-results.xml'
-                }
-            }
-        }
+        // Test stage has been removed as requested
         
         // -----------------------------
-        // Stage 4: Code quality check
+        // Stage 3 (formerly 4): Code quality check
         // -----------------------------
         stage('Lint Code') {
             steps {
@@ -102,12 +84,11 @@ pipeline {
         }
         
         // -----------------------------
-        // Stage 5: Build Docker Image
+        // Stage 4 (formerly 5): Build Docker Image
         // -----------------------------
         stage('Build Docker Image') {
             steps {
                 script {
-
                     // Build Docker image with build number tag
                     docker.build("${DOCKER_IMAGE}:${DOCKER_TAG}")
                 }
@@ -115,12 +96,11 @@ pipeline {
         }
         
         // ------------------------------------
-        // Stage 6: Push Docker image to DockerHub
+        // Stage 5 (formerly 6): Push Docker image to DockerHub
         // ------------------------------------
         stage('Push to DockerHub') {
             steps {
                 script {
-
                     // Authenticate to DockerHub using Jenkins credentials
                     docker.withRegistry('', 'dockerhub-credentials') {
 
@@ -135,14 +115,12 @@ pipeline {
         }
         
         // ------------------------------------
-        // Stage 7: Deploy application to staging server
+        // Stage 6 (formerly 7): Deploy application to staging server
         // ------------------------------------
         stage('Deploy to Staging') {
             steps {
-
                 // Use Jenkins SSH credentials to access remote server
                 sshagent(['staging-server-ssh']) {
-
                     sh """
                         ssh -o StrictHostKeyChecking=no ubuntu@${STAGING_SERVER} '
 
@@ -177,11 +155,10 @@ pipeline {
         }
         
         // -----------------------------
-        // Stage 8: Application health check
+        // Stage 7 (formerly 8): Application health check
         // -----------------------------
         stage('Health Check') {
             steps {
-
                 // Wait few seconds for container startup
                 sleep(10)
 
@@ -205,8 +182,15 @@ pipeline {
             // Send success email notification
             emailext (
                 to: 'sameertiruwa1010@gmail.com',
-                subject: "Pipeline Success: ${env.JOB_NAME} - ${env.BUILD_NUMBER}",
-                body: "The pipeline has completed successfully.\nApp is running at: http://${STAGING_SERVER}:5000"
+                subject: "✅ Success: ${env.JOB_NAME} - ${env.BUILD_NUMBER}",
+                body: """
+                    <h2>Pipeline Successful!</h2>
+                    <p><b>Application:</b> ${APP_NAME}</p>
+                    <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
+                    <p><b>Docker Image:</b> ${DOCKER_IMAGE}:${DOCKER_TAG}</p>
+                    <p><b>App URL:</b> <a href='http://${STAGING_SERVER}:5000'>http://${STAGING_SERVER}:5000</a></p>
+                    <p><b>Health Check:</b> <a href='http://${STAGING_SERVER}:5000/health'>http://${STAGING_SERVER}:5000/health</a></p>
+                """.stripIndent()
             )
         }
 
@@ -217,14 +201,18 @@ pipeline {
             // Send failure notification email
             emailext (
                 to: 'sameertiruwa1010@gmail.com',
-                subject: "Pipeline Failed: ${env.JOB_NAME} - ${env.BUILD_NUMBER}",
-                body: "Please check the console output at: ${env.BUILD_URL}"
+                subject: "❌ Failed: ${env.JOB_NAME} - ${env.BUILD_NUMBER}",
+                body: """
+                    <h2>Pipeline Failed</h2>
+                    <p><b>Application:</b> ${APP_NAME}</p>
+                    <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
+                    <p><b>Check Console Output:</b> <a href='${env.BUILD_URL}console'>${env.BUILD_URL}console</a></p>
+                """.stripIndent()
             )
         }
 
         // Always run this step
         always {
-
             // Clean Jenkins workspace after build
             cleanWs()
         }

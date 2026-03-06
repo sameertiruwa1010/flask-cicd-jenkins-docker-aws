@@ -1,32 +1,36 @@
-// Jenkins Declarative Pipeline for LOCAL Jenkins
+// Jenkins Declarative Pipeline
+// CI/CD for Flask application using Docker and EC2
+
 pipeline {
 
-    // Run on local machine (no agent needed)
+    // Run pipeline on any available Jenkins agent
     agent any
-    
+
+    // Global environment variables
     environment {
-        APP_NAME = 'flask-ci-cd-demo'
-        DOCKER_IMAGE = 'nyapu1010/flask-app'
-        DOCKER_TAG = "${BUILD_NUMBER}"
-        STAGING_SERVER = '13.233.247.92'
+        APP_NAME       = "flask-ci-cd-demo"
+        DOCKER_IMAGE   = "nyapu1010/flask-app"
+        DOCKER_TAG     = "${BUILD_NUMBER}"
+        STAGING_SERVER = "13.233.247.92"
     }
-    
+
     stages {
-        stage('Checkout Code') {
+
+        // -------------------------------
+        // Checkout application source code
+        // -------------------------------
+        stage('Checkout') {
             steps {
-                // For local Jenkins, you can use:
-                // Option 1: Clone from GitHub
-                git branch: 'main', 
+                git branch: 'main',
                     url: 'https://github.com/sameertiruwa1010/flask-cicd-jenkins-docker-aws.git',
                     credentialsId: 'github-credentials'
-                
-                // Option 2: Use local directory (simpler for testing)
-                // dir('/path/to/your/local/project') {
-                //     echo 'Using local project files'
-                // }
             }
         }
-        
+
+        // ---------------------------------------
+        // Install Python dependencies (optional)
+        // Useful if tests or linting are added
+        // ---------------------------------------
         stage('Setup Python Environment') {
             steps {
                 sh '''
@@ -37,77 +41,103 @@ pipeline {
                 '''
             }
         }
-        
+
+        // -------------------------------
+        // Build Docker image
+        // -------------------------------
         stage('Build Docker Image') {
             steps {
                 script {
-                    // Build locally
+                    echo "Building Docker image ${DOCKER_IMAGE}:${DOCKER_TAG}"
                     docker.build("${DOCKER_IMAGE}:${DOCKER_TAG}")
                 }
             }
         }
-        
-        stage('Push to DockerHub') {
+
+        // -----------------------------------
+        // Push image to DockerHub registry
+        // -----------------------------------
+        stage('Push Docker Image') {
             steps {
                 script {
                     docker.withRegistry('', 'dockerhub-credentials') {
-                        docker.image("${DOCKER_IMAGE}:${DOCKER_TAG}").push()
-                        docker.image("${DOCKER_IMAGE}:${DOCKER_TAG}").push('latest')
+                        def image = docker.image("${DOCKER_IMAGE}:${DOCKER_TAG}")
+
+                        image.push()
+                        image.push('latest')
                     }
                 }
             }
         }
-        
-        stage('Deploy to EC2 Staging') {
+
+        // -----------------------------------
+        // Deploy latest image to EC2 server
+        // -----------------------------------
+        stage('Deploy to Staging') {
             steps {
                 sshagent(['staging-server-ssh']) {
                     sh """
                         ssh -o StrictHostKeyChecking=no ubuntu@${STAGING_SERVER} '
-                            # Pull the latest image
+                            
+                            echo "Pulling latest image..."
                             docker pull ${DOCKER_IMAGE}:latest
-                            
-                            # Stop and remove old container
+
+                            echo "Stopping existing container (if running)..."
                             docker stop ${APP_NAME} || true
+
+                            echo "Removing old container..."
                             docker rm ${APP_NAME} || true
-                            
-                            # Run new container
-                            docker run -d \\
-                                --name ${APP_NAME} \\
-                                --restart unless-stopped \\
-                                -p 5000:5000 \\
-                                -e FLASK_ENV=staging \\
+
+                            echo "Starting new container..."
+                            docker run -d \
+                                --name ${APP_NAME} \
+                                --restart unless-stopped \
+                                -p 5000:5000 \
+                                -e FLASK_ENV=staging \
                                 ${DOCKER_IMAGE}:latest
-                            
-                            # Clean up old images
+
+                            echo "Removing unused Docker images..."
                             docker image prune -f
-                            
-                            # Show running containers
-                            docker ps | grep ${APP_NAME}
+
+                            echo "Current running containers:"
+                            docker ps
                         '
                     """
                 }
             }
         }
-        
+
+        // -----------------------------------
+        // Verify application health endpoint
+        // -----------------------------------
         stage('Health Check') {
             steps {
                 sleep(10)
+
                 sh """
-                    curl -f http://${STAGING_SERVER}:5000/health || exit 1
+                    echo "Checking application endpoint..."
+                    curl -f http://${STAGING_SERVER}:5000/health
                 """
             }
         }
     }
-    
+
+    // -----------------------------------
+    // Post pipeline actions
+    // -----------------------------------
     post {
+
         success {
-            echo "✅ Pipeline Successful!"
-            echo "App running at: http://${STAGING_SERVER}:5000"
+            echo "Deployment successful"
+            echo "Application URL: http://${STAGING_SERVER}:5000"
         }
+
         failure {
-            echo "❌ Pipeline Failed!"
+            echo "Pipeline failed. Check console logs."
         }
+
         always {
+            // Clean Jenkins workspace
             cleanWs()
         }
     }

@@ -1,152 +1,87 @@
-// Jenkins Declarative Pipeline
+// Jenkins Declarative Pipeline for LOCAL Jenkins
 pipeline {
 
-    // Run this pipeline on any available Jenkins agent/node
+    // Run on local machine (no agent needed)
     agent any
     
-    // Global environment variables used in the pipeline
     environment {
-
-        // Name of the application/container
         APP_NAME = 'flask-ci-cd-demo'
-
-        // Docker image repository (DockerHub username/image-name)
         DOCKER_IMAGE = 'nyapu1010/flask-app'
-
-        // Use Jenkins build number as Docker image tag
         DOCKER_TAG = "${BUILD_NUMBER}"
-        
-        // IP address of staging server where the app will be deployed
-        STAGING_SERVER = '13.201.117.15'
-        
-        // Jenkins stored credentials for DockerHub login
-        DOCKER_CREDENTIALS = credentials('dockerhub-credentials')
+        STAGING_SERVER = '13.233.247.92'
     }
     
     stages {
-
-        // -----------------------------
-        // Stage 1: Get code from GitHub
-        // -----------------------------
         stage('Checkout Code') {
             steps {
-                // Clone the project repository from GitHub
+                // For local Jenkins, you can use:
+                // Option 1: Clone from GitHub
                 git branch: 'main', 
                     url: 'https://github.com/sameertiruwa1010/flask-cicd-jenkins-docker-aws.git',
                     credentialsId: 'github-credentials'
+                
+                // Option 2: Use local directory (simpler for testing)
+                // dir('/path/to/your/local/project') {
+                //     echo 'Using local project files'
+                // }
             }
         }
         
-        // ------------------------------------
-        // Stage 2: Create Python virtual env
-        // and install project dependencies
-        // ------------------------------------
         stage('Setup Python Environment') {
             steps {
                 sh '''
-                    # Create Python virtual environment
                     python3 -m venv venv
-
-                    # Activate virtual environment
                     . venv/bin/activate
-
-                    # Upgrade pip
                     pip install --upgrade pip
-
-                    # Install required dependencies
                     pip install -r requirements.txt
                 '''
             }
         }
         
-        // -----------------------------
-        // ❌ Stage 3: Run Tests - REMOVED
-        // -----------------------------
-        // Test stage has been removed as requested
-        
-        // -----------------------------
-        // Stage 3 (formerly 4): Code quality check
-        // -----------------------------
-        stage('Lint Code') {
-            steps {
-                sh '''
-                    # Activate virtual environment
-                    . venv/bin/activate
-
-                    # Install pylint for static code analysis
-                    pip install pylint
-
-                    # Run lint check on main application file
-                    # --exit-zero prevents pipeline failure for warnings
-                    pylint app.py --exit-zero
-                '''
-            }
-        }
-        
-        // -----------------------------
-        // Stage 4 (formerly 5): Build Docker Image
-        // -----------------------------
         stage('Build Docker Image') {
             steps {
                 script {
-                    // Build Docker image with build number tag
+                    // Build locally
                     docker.build("${DOCKER_IMAGE}:${DOCKER_TAG}")
                 }
             }
         }
         
-        // ------------------------------------
-        // Stage 5 (formerly 6): Push Docker image to DockerHub
-        // ------------------------------------
         stage('Push to DockerHub') {
             steps {
                 script {
-                    // Authenticate to DockerHub using Jenkins credentials
                     docker.withRegistry('', 'dockerhub-credentials') {
-
-                        // Push versioned image
                         docker.image("${DOCKER_IMAGE}:${DOCKER_TAG}").push()
-
-                        // Also push image with 'latest' tag
                         docker.image("${DOCKER_IMAGE}:${DOCKER_TAG}").push('latest')
                     }
                 }
             }
         }
         
-        // ------------------------------------
-        // Stage 6 (formerly 7): Deploy application to staging server
-        // ------------------------------------
-        stage('Deploy to Staging') {
+        stage('Deploy to EC2 Staging') {
             steps {
-                // Use Jenkins SSH credentials to access remote server
                 sshagent(['staging-server-ssh']) {
                     sh """
                         ssh -o StrictHostKeyChecking=no ubuntu@${STAGING_SERVER} '
-
-                            # Pull the newest Docker image
+                            # Pull the latest image
                             docker pull ${DOCKER_IMAGE}:latest
                             
-                            # Stop old container if running
+                            # Stop and remove old container
                             docker stop ${APP_NAME} || true
-                            
-                            # Remove old container
                             docker rm ${APP_NAME} || true
                             
-                            # Run new container with required configuration
+                            # Run new container
                             docker run -d \\
                                 --name ${APP_NAME} \\
                                 --restart unless-stopped \\
                                 -p 5000:5000 \\
                                 -e FLASK_ENV=staging \\
-                                --log-opt max-size=10m \\
-                                --log-opt max-file=3 \\
                                 ${DOCKER_IMAGE}:latest
                             
-                            # Remove unused old Docker images
+                            # Clean up old images
                             docker image prune -f
                             
-                            # Verify container is running
+                            # Show running containers
                             docker ps | grep ${APP_NAME}
                         '
                     """
@@ -154,66 +89,25 @@ pipeline {
             }
         }
         
-        // -----------------------------
-        // Stage 7 (formerly 8): Application health check
-        // -----------------------------
         stage('Health Check') {
             steps {
-                // Wait few seconds for container startup
                 sleep(10)
-
                 sh """
-                    # Check if application responds successfully
                     curl -f http://${STAGING_SERVER}:5000/health || exit 1
                 """
             }
         }
     }
     
-    // ------------------------------------
-    // Post pipeline actions
-    // ------------------------------------
     post {
-
-        // If pipeline succeeds
         success {
-            echo 'Pipeline completed successfully!'
-
-            // Send success email notification
-            emailext (
-                to: 'sameertiruwa1010@gmail.com',
-                subject: "✅ Success: ${env.JOB_NAME} - ${env.BUILD_NUMBER}",
-                body: """
-                    <h2>Pipeline Successful!</h2>
-                    <p><b>Application:</b> ${APP_NAME}</p>
-                    <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
-                    <p><b>Docker Image:</b> ${DOCKER_IMAGE}:${DOCKER_TAG}</p>
-                    <p><b>App URL:</b> <a href='http://${STAGING_SERVER}:5000'>http://${STAGING_SERVER}:5000</a></p>
-                    <p><b>Health Check:</b> <a href='http://${STAGING_SERVER}:5000/health'>http://${STAGING_SERVER}:5000/health</a></p>
-                """.stripIndent()
-            )
+            echo "✅ Pipeline Successful!"
+            echo "App running at: http://${STAGING_SERVER}:5000"
         }
-
-        // If pipeline fails
         failure {
-            echo 'Pipeline failed!'
-
-            // Send failure notification email
-            emailext (
-                to: 'sameertiruwa1010@gmail.com',
-                subject: "❌ Failed: ${env.JOB_NAME} - ${env.BUILD_NUMBER}",
-                body: """
-                    <h2>Pipeline Failed</h2>
-                    <p><b>Application:</b> ${APP_NAME}</p>
-                    <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
-                    <p><b>Check Console Output:</b> <a href='${env.BUILD_URL}console'>${env.BUILD_URL}console</a></p>
-                """.stripIndent()
-            )
+            echo "❌ Pipeline Failed!"
         }
-
-        // Always run this step
         always {
-            // Clean Jenkins workspace after build
             cleanWs()
         }
     }
